@@ -1,7 +1,7 @@
 #!/bin/bash
 # End-to-end test: runs the real app in the BACKGROUND (no Dock icon, no focus steal, window placed
 # off-screen, isolated data dir) and takes screenshots with WKWebView.takeSnapshot.
-# It never touches your Ghostty windows or ~/.lantern.
+# It never touches your real windows or ~/.lantern.
 set -uo pipefail
 cd "$(dirname "$0")/.."
 ROOT="$PWD"; OUT="${OUT:-$ROOT/tests/screenshots}"; mkdir -p "$OUT"
@@ -19,7 +19,7 @@ cleanup(){ "$L" close >/dev/null 2>&1; pkill -f "$APP/Contents/MacOS/Lantern" 2>
 trap cleanup EXIT
 
 echo "== open a single plan (window, background)"
-"$L" open --window "$WORK/plan.md" >/dev/null; sleep 2.5
+"$L" open "$WORK/plan.md" >/dev/null; sleep 2.5
 shot 01-single
 check "plan rendered"            '[[ "$(ev "document.querySelectorAll(\".blk\").length")" -gt 8 ]]'
 check "frontmatter card"         '[[ "$(ev "!!document.querySelector(\".front\")")" != 0 ]]'
@@ -39,7 +39,7 @@ check "changed block glows"      '[[ "$(ev "document.querySelectorAll(\".glow\")
 
 echo "== folder: horizontal tabs"
 "$L" close >/dev/null 2>&1; sleep 0.5
-"$L" open --window "$WORK/plans" >/dev/null; sleep 2
+"$L" open "$WORK/plans" >/dev/null; sleep 2
 shot 03-folder-tabs
 check "folder opens both plans"  '[[ "$("$L" list | wc -l | tr -d " ")" == 2 ]]'
 check "tabs strip visible"       '[[ "$(ev "document.querySelectorAll(\"#tabs .tab\").length")" == 2 ]]'
@@ -53,8 +53,15 @@ echo "== MCP server (what Claude uses)"
 mcp() { printf '%s\n' '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-03-26"}}' "$1" | "$L" mcp; }
 check "mcp lists 6 tools"        '[[ "$(mcp "{\"jsonrpc\":\"2.0\",\"id\":2,\"method\":\"tools/list\"}" | grep -o lantern_ | wc -l | tr -d " ")" -ge 6 ]]'
 check "mcp switch works"         '[[ "$(mcp "{\"jsonrpc\":\"2.0\",\"id\":2,\"method\":\"tools/call\",\"params\":{\"name\":\"lantern_switch\",\"arguments\":{\"target\":\"alpha\"}}}")" == *"switched to alpha"* ]]'
-check "mcp layout works"         '[[ "$(mcp "{\"jsonrpc\":\"2.0\",\"id\":2,\"method\":\"tools/call\",\"params\":{\"name\":\"lantern_layout\",\"arguments\":{\"width\":55,\"side\":\"left\"}}}")" == *"55% on the left"* ]]'
+check "mcp window resize works"         '[[ "$(mcp "{\"jsonrpc\":\"2.0\",\"id\":2,\"method\":\"tools/call\",\"params\":{\"name\":\"lantern_window\",\"arguments\":{\"width\":640,\"height\":500}}}")" == *"640x500"* ]]'
 check "mcp reports bad path as error" '[[ "$(mcp "{\"jsonrpc\":\"2.0\",\"id\":2,\"method\":\"tools/call\",\"params\":{\"name\":\"lantern_open\",\"arguments\":{\"paths\":[\"/nope.md\"]}}}")" == *"isError\":true"* ]]'
+
+echo "== details / footnotes / broken images"
+"$L" open "$WORK/extras.md" >/dev/null; sleep 2; "$L" switch extras >/dev/null; sleep 1
+shot 03-extras
+check "details is one block"     '[[ "$(ev "document.querySelector(\"details\").textContent.includes(\"Hidden content\")")" != 0 ]]'
+check "footnotes numbered"       '[[ "$(ev "document.querySelectorAll(\"sup.fn\").length")" == 2 && "$(ev "document.querySelectorAll(\"ol.footnotes li\").length")" == 2 ]]'
+check "broken image placeholder" '[[ "$(ev "document.querySelectorAll(\".imgerr\").length")" == 1 ]]'
 
 echo "== dark"
 ev "document.documentElement.dataset.theme='dark'" >/dev/null; shot 05-dark

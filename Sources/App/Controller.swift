@@ -23,8 +23,6 @@ final class Controller: NSObject, WKScriptMessageHandler, WKNavigationDelegate, 
     var activePath: String?
     var folders: [String: Set<String>] = [:]     // folder -> known files
     var dismissed = Set<String>()
-    var overlay: PaneOverlay?
-    var paneMode = false
     var view = "full"
     var tick = 0
     var scanning = false
@@ -69,11 +67,6 @@ final class Controller: NSObject, WKScriptMessageHandler, WKNavigationDelegate, 
         window.isMovable = true
         window.isMovableByWindowBackground = true
         window.hasShadow = true
-    }
-    func styleForPane() {
-        window.styleMask = [.borderless, .resizable]
-        window.hasShadow = false
-        window.isMovable = false
     }
 
     func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
@@ -121,11 +114,8 @@ final class Controller: NSObject, WKScriptMessageHandler, WKNavigationDelegate, 
             else {
                 let rel = u.components(separatedBy: "#")[0].removingPercentEncoding ?? u
                 let abs = rel.hasPrefix("/") ? rel : ((path as NSString).deletingLastPathComponent as NSString).appendingPathComponent(rel)
-                if rel.lowercased().hasSuffix(".md") { open(paths: [abs], opts: ["openIn": paneMode ? "pane" : "window"], focus: false) }
+                if rel.lowercased().hasSuffix(".md") { open(paths: [abs], opts: [:], focus: false) }
             }
-        case "focusTerminal":
-            guard paneMode else { return }
-            NSRunningApplication.runningApplications(withBundleIdentifier: "com.mitchellh.ghostty").first?.activate(options: [])
         case "active": activePath = path; updateTitle()
         default: break
         }
@@ -134,7 +124,6 @@ final class Controller: NSObject, WKScriptMessageHandler, WKNavigationDelegate, 
     func applySetting(_ k: String, _ v: String) {
         SettingsDB.shared.set(k, v)
         if k == "appearance" { applyAppearance() }
-        if k == "width" || k == "side" { overlay?.tick() }
         pushSettings()
     }
     func applyAppearance() {
@@ -178,43 +167,39 @@ final class Controller: NSObject, WKScriptMessageHandler, WKNavigationDelegate, 
         activePath = activate
         js("Lantern.activate(\(q(activate)))")
 
-        if let w = opts["width"] as? String ?? (opts["width"] as? Int).map(String.init) { SettingsDB.shared.set("width", w); pushSettings() }
-        if let s = opts["side"] as? String { SettingsDB.shared.set("side", s); pushSettings() }
-        var wantPane = (opts["openIn"] as? String ?? settings["openIn"]) == "pane"
-        let ghostty = PaneOverlay(window: window, widthPct: { 40 }, side: { "right" }).ghosttyWindow() != nil
-        var note = ""
-        if wantPane && !ghostty && !isTest { wantPane = false; note = " (no Ghostty window found, opened as a window)" }
-        if let v = opts["view"] as? String { view = v } else { view = wantPane ? "lite" : "full" }
+        if let v = opts["view"] as? String { view = v }
         js("Lantern.setView(\(q(view)))")
-        show(pane: wantPane, focus: opts["focus"] as? Bool ?? focus)
+        show(focus: opts["focus"] as? Bool ?? focus)
         updateTitle()
-        return "opened \(files.count + dirs.count) path(s) — \(wantPane ? "pane \(settings["width"] ?? "40")%" : "window")\(note)"
+        return "opened \(files.count + dirs.count) path(s)"
     }
 
-    func show(pane: Bool, focus: Bool) {
-        paneMode = pane
-        js("Lantern.setChrome(\(q(pane ? "pane" : "window")))")
-        if pane {
-            styleForPane()
-            if isTest {
-                overlay?.stop(); overlay = nil
-                window.setFrame(NSRect(x: -4000, y: 100, width: 520, height: 780), display: true)
-            } else {
-                if overlay == nil {
-                    overlay = PaneOverlay(window: window, widthPct: { [weak self] in Double(self?.settings["width"] ?? "40") ?? 40 },
-                                          side: { [weak self] in self?.settings["side"] ?? "right" })
-                }
-                overlay?.start()
-            }
-        } else {
-            overlay?.stop(); overlay = nil
-            styleForWindowMode()
-            if isTest { window.setFrame(NSRect(x: -4000, y: 100, width: 1000, height: 780), display: true) }
-            else if !window.isVisible { window.center() }
-        }
+    func show(focus: Bool) {
+        styleForWindowMode()
+        if isTest && !window.isVisible { window.setFrame(NSRect(x: -4000, y: 100, width: 1000, height: 780), display: true) }
+        else if !window.isVisible { window.center() }
         if focus && !isTest { NSApp.activate(ignoringOtherApps: true); window.makeKeyAndOrderFront(nil) }
-        else if !pane { window.orderFrontRegardless() }
-        else if isTest { window.orderFrontRegardless() }
+        else { window.orderFrontRegardless() }
+    }
+
+    /// Resize / move / minimize Lantern's own window. x,y are from the top-left of the main screen.
+    func windowCmd(_ req: [String: Any]) -> [String: Any] {
+        func num(_ k: String) -> CGFloat? { (req[k] as? NSNumber).map { CGFloat(truncating: $0) } }
+        if req["state"] as? String == "minimize" { window.miniaturize(nil) }
+        else if req["state"] as? String == "restore" { window.deminiaturize(nil) }
+        else if req["state"] as? String == "fullscreen" { window.toggleFullScreen(nil) }
+        var f = window.frame
+        let topY = (NSScreen.screens.first?.frame.height ?? 0) - f.maxY
+        let w = max(num("width") ?? f.width, window.minSize.width), h = max(num("height") ?? f.height, window.minSize.height)
+        let x = num("x") ?? f.minX, y = num("y") ?? topY
+        if req["center"] as? Bool == true { window.setContentSize(NSSize(width: w, height: h)); window.center() }
+        else {
+            f = NSRect(x: x, y: (NSScreen.screens.first?.frame.height ?? 0) - y - h, width: w, height: h)
+            window.setFrame(f, display: true)
+        }
+        let nf = window.frame
+        let ny = (NSScreen.screens.first?.frame.height ?? 0) - nf.maxY
+        return ["message": "window \(Int(nf.width))x\(Int(nf.height)) at \(Int(nf.minX)),\(Int(ny))"]
     }
 
     func updateTitle() {
@@ -312,7 +297,6 @@ final class Controller: NSObject, WKScriptMessageHandler, WKNavigationDelegate, 
     }
 
     func closeAll() {
-        overlay?.stop(); overlay = nil
         for path in order { js("Lantern.remove(\(q(path)))") }
         window.orderOut(nil)
         plans = [:]; order = []; folders = [:]; activePath = nil
@@ -339,10 +323,7 @@ final class Controller: NSObject, WKScriptMessageHandler, WKNavigationDelegate, 
             else { hit = order.first { ($0 as NSString).lastPathComponent.localizedCaseInsensitiveContains(t) } }
             guard let h = hit else { return reply(["error": "no such plan: \(t)"]) }
             activePath = h; js("Lantern.activate(\(q(h)))"); updateTitle(); reply(["message": "switched to \((h as NSString).lastPathComponent)"])
-        case "width":
-            if let v = req["value"] { applySetting("width", "\(v)") }
-            if let sd = req["side"] as? String { applySetting("side", sd) }
-            reply(["message": "pane: \(settings["width"] ?? "40")% on the \(settings["side"] ?? "right")"])
+        case "window": reply(windowCmd(req))
         case "list":
             reply(["plans": order.map { p -> [String: Any] in
                 return ["path": p, "active": p == activePath]

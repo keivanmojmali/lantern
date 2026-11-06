@@ -15,11 +15,8 @@ final class SettingsDB {
     static let defaults: [String: String] = [
         "appearance": "system",   // system | light | dark
         "tabs": "side",           // side | top
-        "width": "40",            // pane width, percent of the Ghostty window
-        "side": "right",          // pane side: right | left
         "vim": "1",
         "dataFolder": "",         // empty = ~/.lantern
-        "openIn": "pane",         // pane | window
         "editor": "",             // optional template, e.g. code -g {path}:{line}
     ]
     private var db: OpaquePointer?

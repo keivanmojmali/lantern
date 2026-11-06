@@ -16,16 +16,46 @@ const R = (() => {
     return { meta, body: md.slice(m[0].length) };
   }
 
+  // [^id] footnotes: pull definitions out of the body, number the references, append a list at the end
+  function footnotes(body) {
+    const defs = new Map();
+    let text = body.replace(/^\[\^([^\]\s]+)\]:[ \t]*(.*(?:\n(?:[ \t]+.*))*)$/gm, (_, id, t) => { defs.set(id, t.replace(/\n\s+/g, ' ').trim()); return ''; });
+    if (!defs.size) return body;
+    const order = [];
+    text = text.split(/(^```[\s\S]*?^```)/m).map((part, i) => i % 2 ? part : part.replace(/\[\^([^\]\s]+)\]/g, (m, id) => {
+      if (!defs.has(id)) return m;
+      let n = order.indexOf(id) + 1; if (!n) n = order.push(id);
+      return '<sup class="fn" id="fnref-' + id + '">' + n + '</sup>';
+    })).join('');
+    if (!order.length) return text;
+    return text.trimEnd() + '\n\n---\n\n<ol class="footnotes">\n' + order.map(id => '<li>' + marked.parseInline(defs.get(id)) + '</li>').join('\n') + '\n</ol>\n';
+  }
+
   function parse(content) {
-    const { meta, body } = frontmatter(content);
+    const { meta, body: rawBody } = frontmatter(content);
+    const body = footnotes(rawBody);
     const toks = marked.lexer(body);
     const blocks = [];
-    for (const t of toks) {
+    const render = t => { const arr = [t]; arr.links = toks.links; return marked.parser(arr); };
+    for (let i = 0; i < toks.length; i++) {
+      const t = toks[i];
       if (t.type === 'space') continue;
-      const arr = [t]; arr.links = toks.links;
-      let html;
-      try { html = DOMPurify.sanitize(marked.parser(arr)); } catch (e) { html = '<pre>' + U.esc(t.raw) + '</pre>'; }
-      blocks.push({ raw: t.raw.trimEnd(), html, type: t.type });
+      let raw = t.raw, html;
+      try {
+        html = render(t);
+        // <details> is split by blank lines into several tokens: glue them back into one block
+        if (t.type === 'html' && /^\s*<details[\s>]/i.test(t.raw) && !/<\/details>/i.test(t.raw)) {
+          let j = i + 1, parts = [html], raws = [t.raw], closed = false;
+          for (; j < toks.length; j++) {
+            if (toks[j].type !== 'space') { parts.push(render(toks[j])); }
+            raws.push(toks[j].raw);
+            if (toks[j].type === 'html' && /<\/details>/i.test(toks[j].raw)) { closed = true; break; }
+          }
+          if (closed) { html = parts.join(''); raw = raws.join(''); i = j; }
+        }
+        html = DOMPurify.sanitize(html);
+      } catch (e) { html = '<pre>' + U.esc(t.raw) + '</pre>'; }
+      blocks.push({ raw: raw.trimEnd(), html, type: t.type });
     }
     const tasks = { done: 0, total: 0 };
     for (const m of body.matchAll(/^\s*[-*+]\s+\[( |x|X)\]/gm)) { tasks.total++; if (m[1] !== ' ') tasks.done++; }
@@ -54,7 +84,9 @@ const R = (() => {
     if (!nodes.length) return;
     const m = await loadMermaid();
     const css = getComputedStyle(document.documentElement);
-    m.initialize({ startOnLoad: false, securityLevel: 'strict', theme: dark() ? 'dark' : 'neutral', fontFamily: 'Inter, -apple-system, sans-serif' });
+    m.initialize({ startOnLoad: false, securityLevel: 'strict', theme: 'base', fontFamily: 'Inter, -apple-system, sans-serif', themeVariables: dark()
+        ? { darkMode: true, background: '#222', primaryColor: '#4a2f25', primaryBorderColor: '#ff8356', primaryTextColor: '#ebe8e4', secondaryColor: '#24413f', tertiaryColor: '#2a2a2a', lineColor: '#8f8f8f', textColor: '#ebe8e4', pie1: '#ff8356', pie2: '#b6dedb', pie3: '#f7f780', pie4: '#8f8f8f', pie5: '#c4684a', pie6: '#6fa8a3' }
+        : { primaryColor: '#ffe6dc', primaryBorderColor: '#ff8356', primaryTextColor: '#2D3748', secondaryColor: '#dff0ee', tertiaryColor: '#f7f4ef', lineColor: '#7a8394', textColor: '#2D3748', pie1: '#ff8356', pie2: '#b6dedb', pie3: '#f7f780', pie4: '#7a8394', pie5: '#ffb89d', pie6: '#6fa8a3' } });
     for (const n of nodes) {
       const src = n.dataset.src, key = (dark() ? 'd' : 'l') + src;
       try {
@@ -76,6 +108,7 @@ const R = (() => {
   function postProcess(root, plan) {
     const dir = U.dirname(plan.path);
     root.querySelectorAll('img').forEach(img => {
+      img.addEventListener('error', () => img.replaceWith(U.el('span', { class: 'imgerr' }, '🖼 ' + (img.alt || 'image not found'))), { once: true });
       const s = img.getAttribute('src') || '';
       if (/^(https?:|data:|lantern-asset:)/.test(s)) return;
       const abs = s.startsWith('/') ? s : dir + '/' + s;

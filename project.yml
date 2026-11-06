@@ -21,15 +21,16 @@ targets:
       - path: Resources/web
         type: folder
         buildPhase: resources
+      - Resources/AppIcon.icns
     info:
       path: Sources/App/Info.plist
       properties:
         CFBundleName: Lantern
         CFBundleDisplayName: Lantern
+        CFBundleIconFile: AppIcon
         LSMinimumSystemVersion: "13.0"
         NSHighResolutionCapable: true
         LSApplicationCategoryType: public.app-category.developer-tools
-        NSAppleEventsUsageDescription: Lantern can ask Ghostty to create a split pane for plans.
         CFBundleDocumentTypes:
           - CFBundleTypeName: Markdown
             CFBundleTypeRole: Viewer

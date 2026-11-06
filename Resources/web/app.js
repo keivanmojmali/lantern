@@ -5,7 +5,6 @@ const $ = id => document.getElementById(id);
 const cur = () => S.plans.get(S.active);
 
 // ───────── native → web ─────────
-L.setChrome = c => { document.body.dataset.chrome = c; };
 L.setSettings = L.setView = () => {};
 L.update = p => {
   const old = S.plans.get(p.path), parsed = R.parse(p.content);

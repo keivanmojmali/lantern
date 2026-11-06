@@ -7,10 +7,11 @@ let usage = """
 lantern — live plan viewer for your terminal workflow
 
   lantern <file.md|dir>...          open plans (same as `lantern open`)
-  lantern open <file|dir>... [--window|--pane] [--width N] [--side left|right] [--lite|--full] [--focus] [--split]
-  lantern close [file]              close one plan, or the whole pane when no file is given
+  lantern open <file|dir>... [--focus]
+  lantern close [file]              close one plan, or the whole viewer when no file is given
   lantern switch <file|index|name>  show another open plan
-  lantern width <percent>           set pane width (saved)
+  lantern window [--width N] [--height N] [--x N] [--y N] [--center] [--minimize|--restore|--fullscreen]
+                                    resize / move Lantern's own window (x,y from top-left of the screen)
   lantern list                      list open plans
   lantern snapshot <out.png>        save a PNG of the viewer
   lantern mcp                       run as an MCP server over stdio (lets Claude control the viewer)
@@ -84,25 +85,13 @@ func planStatus(_ file: String) -> (PlanState, String, String) {
 }
 func exitCode(_ s: String) -> Int32 { s == "approved" ? 0 : s == "changes" ? 2 : 4 }
 
-func ghosttySplit() {
-    let script = """
-    tell application "Ghostty"
-      set t to focused terminal of selected tab of front window
-      split t direction right
-    end tell
-    """
-    let p = Process(); p.executableURL = URL(fileURLWithPath: "/usr/bin/osascript"); p.arguments = ["-e", script]
-    try? p.run(); p.waitUntilExit()
-    usleep(400_000)
-}
-
 // MARK: MCP server (newline-delimited JSON-RPC 2.0 over stdio)
 let mcpInstructions = """
-Lantern is a lean markdown viewer that shows your plans live, next to the user's terminal. It is view-only: the user reads, you keep working.
+Lantern is a lean markdown viewer that shows your plans live in its own window. It is view-only: the user reads, you keep working.
 - When you write or substantially update a plan/spec/design doc (a .md file), call lantern_open with its absolute path so the user can read it rendered. Opening a folder shows every .md in it as tabs.
 - Edits you make to an open file appear live (changed blocks glow), so do NOT re-open after editing. Just keep writing the file.
 - Use lantern_switch to bring a different open file to the front, lantern_close when the doc is no longer relevant, lantern_list to see what is open.
-- mode "pane" (default) overlays the right 40% of the front Ghostty window; mode "window" opens a normal resizable window. Use lantern_layout to change the pane width (10-90 percent) or side (left/right) if the user asks for more/less room.
+- Use lantern_window to resize, move, center, minimize or restore Lantern's own window if the user asks for more/less room or a different spot.
 - lantern_screenshot saves a PNG of the viewer if you need to check how something rendered.
 - Do not steal focus: leave focus false unless the user asks to jump to the viewer.
 """
@@ -111,9 +100,6 @@ let mcpTools: [[String: Any]] = [
     ["name": "lantern_open", "description": "Open markdown file(s) or a folder of .md files in the Lantern viewer. Launches Lantern if it is not running. Files update live as they change.",
      "inputSchema": ["type": "object", "required": ["paths"], "properties": [
         "paths": ["type": "array", "items": ["type": "string"], "description": "Absolute paths to .md files or folders"],
-        "mode": ["type": "string", "enum": ["pane", "window"], "description": "pane = overlay on the front Ghostty window (default); window = normal window"],
-        "width": ["type": "integer", "minimum": 10, "maximum": 90, "description": "Pane width in percent of the Ghostty window (default 40)"],
-        "side": ["type": "string", "enum": ["left", "right"], "description": "Which side the pane covers (default right)"],
         "focus": ["type": "boolean", "description": "Bring the viewer to the front (default false)"]]]],
     ["name": "lantern_close", "description": "Close one open file, or the whole viewer when no path is given.",
      "inputSchema": ["type": "object", "properties": ["path": ["type": "string", "description": "Absolute path of the file to close; omit to close the viewer"]]]],
@@ -121,10 +107,14 @@ let mcpTools: [[String: Any]] = [
      "inputSchema": ["type": "object", "required": ["target"], "properties": ["target": ["type": "string", "description": "Absolute path, 1-based tab index, or part of the file name"]]]],
     ["name": "lantern_list", "description": "List the files currently open in Lantern (the active one is marked).",
      "inputSchema": ["type": "object", "properties": [String: Any]()]],
-    ["name": "lantern_layout", "description": "Resize the pane: set its width (percent of the Ghostty window) and/or which side it covers. Saved for next time.",
+    ["name": "lantern_window", "description": "Resize and/or move Lantern's own window. Omitted fields stay unchanged; returns the resulting size and position.",
      "inputSchema": ["type": "object", "properties": [
-        "width": ["type": "integer", "minimum": 10, "maximum": 90],
-        "side": ["type": "string", "enum": ["left", "right"]]]]],
+        "width": ["type": "integer", "minimum": 320, "description": "Window width in points"],
+        "height": ["type": "integer", "minimum": 300, "description": "Window height in points"],
+        "x": ["type": "integer", "description": "Left edge, from the left of the main screen"],
+        "y": ["type": "integer", "description": "Top edge, from the top of the main screen"],
+        "center": ["type": "boolean", "description": "Center the window on screen"],
+        "state": ["type": "string", "enum": ["minimize", "restore", "fullscreen"]]]]],
     ["name": "lantern_screenshot", "description": "Save a PNG screenshot of the viewer and return its path.",
      "inputSchema": ["type": "object", "properties": ["out": ["type": "string", "description": "Output path (default /tmp/lantern.png)"]]]],
 ]
@@ -138,9 +128,6 @@ func mcpCall(_ name: String, _ a: [String: Any]) -> (String, Bool) {
     case "lantern_open":
         guard let paths = a["paths"] as? [String], !paths.isEmpty else { return ("paths is required", true) }
         var req: [String: Any] = ["cmd": "open", "paths": paths.map { Store.resolve($0) }, "focus": a["focus"] as? Bool ?? false]
-        if let m = a["mode"] as? String { req["openIn"] = m }
-        if let w = a["width"] { req["width"] = "\(w)" }
-        if let s = a["side"] as? String { req["side"] = s }
         return res(request(req), "opened")
     case "lantern_close":
         return res(request(["cmd": "close", "path": (a["path"] as? String).map { Store.resolve($0) } ?? ""], launch: false), "closed")
@@ -152,10 +139,9 @@ func mcpCall(_ name: String, _ a: [String: Any]) -> (String, Bool) {
         if let e = r["error"] as? String { return (e, true) }
         let ps = r["plans"] as? [[String: Any]] ?? []
         return (ps.isEmpty ? "nothing open" : ps.map { "\($0["active"] as? Bool == true ? "* " : "  ")\($0["path"] as? String ?? "")" }.joined(separator: "\n"), false)
-    case "lantern_layout":
-        var req: [String: Any] = ["cmd": "width"]
-        if let w = a["width"] as? Int { guard (10...90).contains(w) else { return ("width must be 10-90", true) }; req["value"] = w }
-        if let s = a["side"] as? String { guard s == "left" || s == "right" else { return ("side must be left or right", true) }; req["side"] = s }
+    case "lantern_window":
+        var req: [String: Any] = ["cmd": "window"]
+        for k in ["width", "height", "x", "y", "center", "state"] { if let v = a[k] { req[k] = v } }
         return res(request(req, launch: false), "ok")
     case "lantern_screenshot":
         let out = a["out"] as? String ?? "/tmp/lantern.png"
@@ -196,7 +182,7 @@ func runMCP() -> Never {
 // MARK: commands
 var args = Array(CommandLine.arguments.dropFirst())
 guard let first = args.first else { print(usage); exit(0) }
-let known: Set<String> = ["mcp", "open", "close", "switch", "width", "list", "snapshot", "eval", "help", "--help", "-h"]
+let known: Set<String> = ["mcp", "open", "close", "switch", "window", "list", "snapshot", "eval", "help", "--help", "-h"]
 var cmd = "open"
 if known.contains(first) { cmd = first; args.removeFirst() }
 
@@ -212,17 +198,9 @@ case "help", "--help", "-h": print(usage)
 
 case "open":
     var req: [String: Any] = ["cmd": "open"]
-    if flag("--window") { req["openIn"] = "window" }
-    if flag("--pane") { req["openIn"] = "pane" }
-    if let w = opt("--width") { req["width"] = w }
-    if let s = opt("--side") { req["side"] = s }
-    if flag("--lite") { req["view"] = "lite" }
-    if flag("--full") { req["view"] = "full" }
     req["focus"] = flag("--focus")
-    let wantSplit = flag("--split")
     if args.isEmpty { die("usage: lantern open <file|dir>...") }
     req["paths"] = args.map { Store.resolve($0) }
-    if wantSplit { ghosttySplit() }
     let r = request(req)
     if let e = r["error"] as? String { die(e) }
     print(r["message"] as? String ?? "ok")
@@ -238,11 +216,18 @@ case "switch":
     if let e = r["error"] as? String { die(e) }
     print(r["message"] as? String ?? "ok")
 
-case "width":
-    guard let w = args.first, let n = Int(w), (10...90).contains(n) else { die("usage: lantern width <10-90>") }
-    let r = request(["cmd": "width", "value": n], launch: false)
+case "window":
+    var req: [String: Any] = ["cmd": "window"]
+    for k in ["width", "height", "x", "y"] {
+        if let v = opt("--" + k) { guard let n = Int(v) else { die("--\(k) needs a number") }; req[k] = n }
+    }
+    if flag("--center") { req["center"] = true }
+    if flag("--minimize") { req["state"] = "minimize" }
+    if flag("--restore") { req["state"] = "restore" }
+    if flag("--fullscreen") { req["state"] = "fullscreen" }
+    let r = request(req, launch: false)
     if let e = r["error"] as? String { die(e) }
-    print("width \(n)%")
+    print(r["message"] as? String ?? "ok")
 
 case "list":
     let r = request(["cmd": "list"], launch: false)
