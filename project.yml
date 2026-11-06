@@ -1,0 +1,51 @@
+name: Lantern
+options:
+  bundleIdPrefix: com.mojmali
+  deploymentTarget:
+    macOS: "13.0"
+settings:
+  base:
+    SWIFT_VERSION: "5.0"
+    MARKETING_VERSION: "0.1.0"
+    CURRENT_PROJECT_VERSION: 1
+    CODE_SIGN_IDENTITY: "-"
+    CODE_SIGN_STYLE: Manual
+    ENABLE_USER_SCRIPT_SANDBOXING: NO
+targets:
+  Lantern:
+    type: application
+    platform: macOS
+    sources:
+      - Sources/App
+      - Sources/Shared
+      - path: Resources/web
+        type: folder
+        buildPhase: resources
+    info:
+      path: Sources/App/Info.plist
+      properties:
+        CFBundleName: Lantern
+        CFBundleDisplayName: Lantern
+        LSMinimumSystemVersion: "13.0"
+        NSHighResolutionCapable: true
+        LSApplicationCategoryType: public.app-category.developer-tools
+        NSAppleEventsUsageDescription: Lantern can ask Ghostty to create a split pane for plans.
+        CFBundleDocumentTypes:
+          - CFBundleTypeName: Markdown
+            CFBundleTypeRole: Viewer
+            LSItemContentTypes: [net.daringfireball.markdown]
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.mojmali.lantern
+        INFOPLIST_FILE: Sources/App/Info.plist
+        ENABLE_HARDENED_RUNTIME: NO
+  lantern:
+    type: tool
+    platform: macOS
+    sources:
+      - Sources/CLI
+      - Sources/Shared
+    settings:
+      base:
+        PRODUCT_NAME: lantern
+        PRODUCT_BUNDLE_IDENTIFIER: com.mojmali.lantern.cli
