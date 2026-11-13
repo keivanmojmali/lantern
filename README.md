@@ -1,33 +1,50 @@
-# Lantern
+# Lantern 🏮
 
-A lean, view-only macOS markdown viewer. Claude (or you) opens `.md` files; Lantern renders them live in its own window.
+A tiny, view-only macOS app that renders the markdown your AI writes, live, in its own window.
 
-- Multiple files become horizontally scrolling tabs across the top.
-- Live reload: edits to an open file appear instantly and changed blocks glow.
-- Code highlighting, tables, task lists, Mermaid diagrams, frontmatter card, clickable `file:line` refs, system light/dark.
-- No editing, approval, notes or settings.
+![Lantern showing a plan with tabs, a Mermaid diagram and a table](docs/hero.png)
+
+## Why
+
+Claude writes plans, specs and design docs as `.md`. Reading them as raw text in a terminal is miserable: no diagrams, no tables, no structure, and you lose your place on every edit. Lantern fixes that:
+
+- **Renders everything**: Mermaid, tables, highlighted code, task lists, frontmatter cards, `file:line` links, light and dark.
+- **Live**: edit the file and the changed blocks glow, without re-opening anything.
+- **Tabs**: open a folder and every `.md` becomes a tab.
+- **Two-way, without touching the file**: Claude can ask you questions inside the doc, and you can highlight any text to comment on it. Replies are stored beside the plan, never in the `.md`.
+
+|  |  |
+|---|---|
+| ![Highlight and comment](docs/comments.png) **Highlight → comment** | ![Question box](docs/ask.png) **Claude asks, you answer** |
+
+![Dark mode](docs/dark.png)
 
 ## Install
 
-    ./scripts/install.sh      # builds, installs /Applications/Lantern.app and ~/.local/bin/lantern, smoke-tests
+    ./scripts/install.sh      # builds, installs /Applications/Lantern.app + ~/.local/bin/lantern, smoke-tests
+    claude mcp add --scope user lantern -- ~/.local/bin/lantern mcp
 
-## CLI
+Needs macOS, Xcode and `xcodegen`.
+
+## Use
+
+Claude drives it through MCP tools (`lantern_open`, `lantern_switch`, `lantern_goto`, `lantern_answers`, `lantern_comments`, `lantern_window`, `lantern_screenshot`, `lantern_list`, `lantern_close`). Or use the CLI yourself:
 
     lantern open <file|dir>... [--focus]
     lantern switch <file|index|name>
-    lantern close [file]
-    lantern list
-    lantern window [--width N] [--height N] [--x N] [--y N] [--center] [--minimize|--restore|--fullscreen]
-    lantern snapshot <out.png>
-    lantern mcp                 # MCP server over stdio
+    lantern goto <heading|text|answer-id>
+    lantern answers [file] [--wait N]      # replies typed into question boxes
+    lantern comments [file] [--wait N]     # highlight comments; Done marks them sent
+    lantern list | close | window | snapshot <out.png>
 
-## MCP (for Claude)
+Ask a question in a doc with a fenced block:
 
-    claude mcp add lantern -- ~/.local/bin/lantern mcp
-
-Tools: `lantern_open`, `lantern_switch`, `lantern_close`, `lantern_list`, `lantern_window`, `lantern_screenshot`.
+    ```answer q1
+    Which database should we use?
+    ```
 
 ## Develop
 
     xcodegen generate
-    ./scripts/test.sh           # background end-to-end suite, screenshots in tests/screenshots
+    ./scripts/test.sh            # 42-check end-to-end suite, runs in the background
+    ./scripts/demo-shots.sh      # regenerates docs/*.png from docs/demo (fake data)

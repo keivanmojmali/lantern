@@ -14,6 +14,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         server = IPCServer { [weak self] req, reply in self?.controller.handle(req, reply: reply) }
         server.start()
     }
+    func applicationDidBecomeActive(_ n: Notification) { controller?.checkAccess() }   // user may have just flipped the switch in System Settings
     func applicationWillTerminate(_ n: Notification) { server?.stop() }
     func application(_ app: NSApplication, open urls: [URL]) { controller.open(paths: urls.map { $0.path }, opts: [:], focus: true) }
     func applicationShouldTerminateAfterLastWindowClosed(_ app: NSApplication) -> Bool { false }
@@ -23,10 +24,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func buildMenu() {
         let main = NSMenu()
-        func add(_ menu: NSMenu, _ title: String, _ sel: Selector?, _ key: String = "", _ mods: NSEvent.ModifierFlags = .command, target: AnyObject? = nil) {
+        func add(_ menu: NSMenu, _ title: String, _ sel: Selector?, _ key: String = "", _ mods: NSEvent.ModifierFlags = .command, target: AnyObject? = nil, chain: Bool = false) {
             let it = NSMenuItem(title: title, action: sel, keyEquivalent: key)
             it.keyEquivalentModifierMask = mods
-            it.target = target ?? (sel.map { _ in self })
+            it.target = chain ? nil : (target ?? (sel.map { _ in self }))   // chain: nil target → first responder (WKWebView)
             menu.addItem(it)
         }
         func sub(_ title: String, _ build: (NSMenu) -> Void) {
@@ -43,8 +44,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             add(m, "Close Plan", #selector(closePlan), "w")
         }
         sub("Edit") { m in
-            add(m, "Copy", #selector(NSText.copy(_:)), "c", target: nil)
-            add(m, "Select All", #selector(NSText.selectAll(_:)), "a", target: nil)
+            add(m, "Copy", #selector(NSText.copy(_:)), "c", chain: true)
+            add(m, "Select All", #selector(NSText.selectAll(_:)), "a", chain: true)
         }
         NSApp.mainMenu = main
     }

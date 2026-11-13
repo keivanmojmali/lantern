@@ -27,6 +27,8 @@ final class Controller: NSObject, WKScriptMessageHandler, WKNavigationDelegate, 
     var tick = 0
     var scanning = false
     let io = DispatchQueue(label: "lantern.io")   // all file reads happen here: a macOS privacy prompt must never freeze the UI
+    var answers: [String: [String: Answer]] = [:]   // plan path -> box id -> answer
+    var notes: [String: NoteSet] = [:]              // plan path -> highlight comments
     var timer: Timer?
     var settings: [String: String] { SettingsDB.shared.all() }
 
@@ -72,6 +74,7 @@ final class Controller: NSObject, WKScriptMessageHandler, WKNavigationDelegate, 
     func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
         ready = true
         pushSettings()
+        checkAccess()
         js("Lantern.setView(\(q(view)))")
         for p in order where plans[p]?.hash.isEmpty == false { push(p, isNew: false) }
         if let a = activePath { js("Lantern.activate(\(q(a)))") }
@@ -108,6 +111,20 @@ final class Controller: NSObject, WKScriptMessageHandler, WKNavigationDelegate, 
         case "copy":
             NSPasteboard.general.clearContents(); NSPasteboard.general.setString(msg["text"] as? String ?? "", forType: .string)
         case "openDialog": openDialog()
+        case "answer":
+            let id = msg["id"] as? String ?? ""
+            guard plans[path] != nil, !id.isEmpty else { break }
+            var a = answers(path)
+            a[id] = Answer(text: msg["text"] as? String ?? "", sent: msg["sent"] as? Bool ?? false, ts: Date().timeIntervalSince1970)
+            answers[path] = a; Store.saveAnswers(path, a)
+        case "comments":
+            guard plans[path] != nil else { break }
+            var n = NoteSet()
+            if let arr = msg["notes"], let d = try? JSONSerialization.data(withJSONObject: arr) { n.notes = (try? JSONDecoder().decode([Note].self, from: d)) ?? [] }
+            n.submitted = (msg["submitted"] as? Bool ?? false) && !n.notes.isEmpty
+            notes[path] = n; Store.saveNotes(path, n)
+        case "openPrivacy": openPrivacySettings()
+        case "recheckAccess": checkAccess()
         case "openURL":
             let u = msg["url"] as? String ?? ""
             if u.hasPrefix("http://") || u.hasPrefix("https://") || u.hasPrefix("mailto:") { if let url = URL(string: u) { NSWorkspace.shared.open(url) } }
@@ -135,6 +152,34 @@ final class Controller: NSObject, WKScriptMessageHandler, WKNavigationDelegate, 
     }
 
     // MARK: opening
+    // MARK: file-access permission (macOS "Files & Folders")
+    /// Touching a protected folder makes macOS show its one-time prompt; if the user already said no, the
+    /// listing fails with a permission error and we tell the page so it can explain how to fix it.
+    func checkAccess() {
+        if isTest { return }
+        io.async { [self] in
+            let home = NSHomeDirectory()
+            var denied: [String] = []
+            for name in ["Desktop", "Documents", "Downloads"] {
+                let dir = home + "/" + name
+                guard FileManager.default.fileExists(atPath: dir) else { continue }
+                do { _ = try FileManager.default.contentsOfDirectory(atPath: dir) }
+                catch let e as NSError {
+                    let posix = (e.userInfo[NSUnderlyingErrorKey] as? NSError)?.code ?? 0
+                    if e.code == NSFileReadNoPermissionError || posix == Int(EPERM) || posix == Int(EACCES) { denied.append(name) }
+                }
+            }
+            DispatchQueue.main.async { self.js("Lantern.setAccess(\(self.jsonString(denied)))") }
+        }
+    }
+
+    func openPrivacySettings() {
+        for u in ["x-apple.systempreferences:com.apple.preference.security?Privacy_FilesAndFolders",
+                  "x-apple.systempreferences:com.apple.preference.security"] {
+            if let url = URL(string: u), NSWorkspace.shared.open(url) { return }
+        }
+    }
+
     func openDialog() {
         let p = NSOpenPanel(); p.allowsMultipleSelection = true; p.canChooseDirectories = true
         if p.runModal() == .OK { open(paths: p.urls.map { $0.path }, opts: [:], focus: true) }
@@ -236,10 +281,28 @@ final class Controller: NSObject, WKScriptMessageHandler, WKNavigationDelegate, 
         return FileData(content: String(decoding: data, as: UTF8.self), mtime: attrs[.modificationDate] as? Date ?? Date(), size: data.count)
     }
 
+    func answers(_ path: String) -> [String: Answer] {
+        if let a = answers[path] { return a }
+        let a = Store.loadAnswers(path); answers[path] = a; return a
+    }
+
+    func notes(_ path: String) -> NoteSet {
+        if let n = notes[path] { return n }
+        let n = Store.loadNotes(path); notes[path] = n; return n
+    }
+
+    /// Resolve an absolute path, 1-based tab index, or part of a file name to an open plan.
+    func resolvePlan(_ t: String) -> String? {
+        if let i = Int(t), i >= 1, i <= order.count { return order[i - 1] }
+        if plans[t] != nil { return t }
+        return order.first { ($0 as NSString).lastPathComponent.localizedCaseInsensitiveContains(t) }
+    }
+
     func push(_ path: String, isNew: Bool) {
         guard let p = plans[path] else { return }
+        let saved = answers(path).mapValues { ["text": $0.text, "sent": $0.sent] as [String: Any] }
         let dict: [String: Any] = [
-            "path": path, "name": (path as NSString).lastPathComponent, "content": p.content,
+            "answers": saved, "comments": notes(path).json, "path": path, "name": (path as NSString).lastPathComponent, "content": p.content,
             "missing": p.missing, "isNew": isNew, "folder": p.folder ?? "",
         ]
         js("Lantern.update(\(jsonString(dict)))")
@@ -317,12 +380,37 @@ final class Controller: NSObject, WKScriptMessageHandler, WKNavigationDelegate, 
             } else { reply(["message": "closed"]); DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) { self.closeAll() } }
         case "switch":
             let t = req["target"] as? String ?? ""
-            var hit: String?
-            if let i = Int(t), i >= 1, i <= order.count { hit = order[i - 1] }
-            else if plans[t] != nil { hit = t }
-            else { hit = order.first { ($0 as NSString).lastPathComponent.localizedCaseInsensitiveContains(t) } }
-            guard let h = hit else { return reply(["error": "no such plan: \(t)"]) }
+            guard let h = resolvePlan(t) else { return reply(["error": "no such plan: \(t)"]) }
             activePath = h; js("Lantern.activate(\(q(h)))"); updateTitle(); reply(["message": "switched to \((h as NSString).lastPathComponent)"])
+        case "goto":
+            let t = req["path"] as? String ?? ""
+            guard let h = t.isEmpty ? activePath : resolvePlan(t) else { return reply(["error": "no such plan: \(t.isEmpty ? "(nothing open)" : t)"]) }
+            let target = req["target"] as? String ?? ""
+            guard !target.isEmpty else { return reply(["error": "target is required"]) }
+            if req["focus"] as? Bool == true { show(focus: true) }
+            activePath = h; updateTitle()
+            web.evaluateJavaScript("Lantern.goto(\(q(h)), \(q(target)))") { r, e in
+                if let e = e { return reply(["error": "\(e)"]) }
+                let s = r as? String ?? ""
+                s.hasPrefix("ok") ? reply(["message": "scrolled to " + s.dropFirst(3)]) : reply(["error": s.isEmpty ? "could not scroll" : s])
+            }
+        case "answers":
+            let t = req["path"] as? String ?? ""
+            let targets: [String]
+            if t.isEmpty { targets = order } else if let h = resolvePlan(t) { targets = [h] } else { return reply(["error": "no such plan: \(t)"]) }
+            var out: [[String: Any]] = []
+            for p in targets {
+                let saved = answers(p)
+                for b in Store.answerBoxes(plans[p]?.content ?? "") {
+                    out.append(["path": p, "id": b.id, "question": b.label, "text": saved[b.id]?.text ?? "", "sent": saved[b.id]?.sent ?? false])
+                }
+            }
+            reply(["answers": out])
+        case "comments":
+            let t = req["path"] as? String ?? ""
+            let targets: [String]
+            if t.isEmpty { targets = order } else if let h = resolvePlan(t) { targets = [h] } else { return reply(["error": "no such plan: \(t)"]) }
+            reply(["comments": targets.map { p -> [String: Any] in var d = notes(p).json; d["path"] = p; return d }])
         case "window": reply(windowCmd(req))
         case "list":
             reply(["plans": order.map { p -> [String: Any] in

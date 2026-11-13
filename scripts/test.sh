@@ -29,7 +29,7 @@ check "task circles (2/4 done)"  '[[ "$(ev "document.querySelectorAll(\"input[ty
 check "file refs clickable"      '[[ "$(ev "document.querySelectorAll(\".ref\").length")" -ge 2 ]]'
 check "mermaid svg rendered"     '[[ "$(ev "!!document.querySelector(\".mermaid-wrap svg\")")" != 0 ]]'
 check "single file: no tab strip" '[[ "$(ev "document.getElementById(\"tabs\").hidden")" != 0 ]]'
-check "no review/approve UI"     '[[ "$(ev "document.querySelectorAll(\"button:not(.tab):not(.copy)\").length")" == 0 ]]'
+check "no review/approve UI"     '[[ "$(ev "document.querySelectorAll(\"button:not(.tab):not(.copy):not(#cbtn)\").length")" == 0 ]]'
 check "md file untouched"        '[[ -z "$(ls "$WORK"/plan.md.* 2>/dev/null)" ]] && diff -q tests/fixtures/plan.md "$WORK/plan.md" >/dev/null'
 
 echo "== live edit glows"
@@ -62,6 +62,39 @@ shot 03-extras
 check "details is one block"     '[[ "$(ev "document.querySelector(\"details\").textContent.includes(\"Hidden content\")")" != 0 ]]'
 check "footnotes numbered"       '[[ "$(ev "document.querySelectorAll(\"sup.fn\").length")" == 2 && "$(ev "document.querySelectorAll(\"ol.footnotes li\").length")" == 2 ]]'
 check "broken image placeholder" '[[ "$(ev "document.querySelectorAll(\".imgerr\").length")" == 1 ]]'
+
+echo "== goto + answer boxes"
+"$L" open "$WORK/ask.md" >/dev/null; sleep 2; "$L" switch ask >/dev/null; sleep 1
+check "two answer boxes rendered" '[[ "$(ev "document.querySelectorAll(\".ask .ask-ta\").length")" == 2 ]]'
+check "goto section scrolls"     '[[ "$("$L" goto "after" 2>&1)" == *"section"* ]]'
+check "goto answer id"           '[[ "$("$L" goto q2 2>&1)" == *"question q2"* ]]'
+check "goto miss is an error"    '! "$L" goto "zzz-nothing" >/dev/null 2>&1'
+check "answers: empty at first"  '[[ "$("$L" answers)" == *"not answered yet"* ]]'
+ev "(()=>{const t=document.querySelector(\".ask-ta[data-id=q1]\");t.value=\"Postgres please\";t.dispatchEvent(new Event(\"input\"));return 1})()" >/dev/null; sleep 0.8
+check "draft readable, unsent"   '[[ "$("$L" answers)" == *"Postgres please"* && "$("$L" answers)" == *"draft, not sent"* ]]'
+shot 06-ask
+ev "document.querySelector(\".ask-send\").click()" >/dev/null; sleep 0.5
+check "send marks it sent"       '[[ "$("$L" answers)" == *"[q1]"*"(sent)"*"> Postgres please"* ]]'
+check "wait returns at timeout"  '[[ "$("$L" answers --wait 1)" == *"[q2]"* ]]'
+check "mcp has goto+answers"     'o="$(mcp "{\"jsonrpc\":\"2.0\",\"id\":2,\"method\":\"tools/list\"}")"; [[ "$o" == *lantern_goto* && "$o" == *lantern_answers* ]]'
+printf '\n## Extra\n\nedited while typing\n' >> "$WORK/ask.md"; sleep 1
+check "edit keeps the typed answer" '[[ "$(ev "document.querySelector(\".ask-ta[data-id=q1]\").value")" == "Postgres please" ]]'
+
+echo "== highlight comments"
+check "no comments yet"          '[[ "$("$L" comments)" == *"no comments yet"* ]]'
+ev "(()=>{const p=[...document.querySelectorAll(\".blk p\")].find(p=>p.textContent.includes(\"Some text\"));const r=document.createRange();const t=p.firstChild;r.setStart(t,5);r.setEnd(t,9);const s=getSelection();s.removeAllRanges();s.addRange(r);p.dispatchEvent(new MouseEvent(\"mouseup\",{bubbles:true}));return 1})()" >/dev/null; sleep 0.4
+check "comment button appears"   '[[ "$(ev "!document.getElementById(\"cbtn\").hidden")" != 0 ]]'
+ev "document.getElementById(\"cbtn\").click()" >/dev/null; sleep 0.2
+ev "(()=>{const t=document.querySelector(\"#cpop textarea\");t.value=\"Go with option B\";t.dispatchEvent(new Event(\"input\"));[...document.querySelectorAll(\"#cpop .ask-send\")][0].click();return 1})()" >/dev/null; sleep 0.8
+check "text is highlighted"      '[[ "$(ev "document.querySelector(\"mark.cmt\").textContent")" == "text" ]]'
+shot 07-comment
+check "comment readable, not done" '[[ "$("$L" comments)" == *"NOT pressed Done"*"on: \"text\""*"> Go with option B"* ]]'
+check "comment survives re-render" '[[ "$(ev "document.querySelectorAll(\"mark.cmt\").length")" == 1 ]]'
+ev "document.querySelector(\"#cbar .ask-send\").click()" >/dev/null; sleep 0.6
+check "Done marks it submitted"  '[[ "$("$L" comments --wait 3)" == *"user pressed Done"*"> Go with option B"* ]]'
+printf '\n## Extra2\n\nmore\n' >> "$WORK/ask.md"; sleep 1
+check "highlight survives edit"  '[[ "$(ev "document.querySelectorAll(\"mark.cmt\").length")" == 1 ]]'
+check "mcp has comments tool"    'o="$(mcp "{\"jsonrpc\":\"2.0\",\"id\":2,\"method\":\"tools/list\"}")"; [[ "$o" == *lantern_comments* ]]'
 
 echo "== dark"
 ev "document.documentElement.dataset.theme='dark'" >/dev/null; shot 05-dark

@@ -42,7 +42,8 @@ const R = (() => {
       if (t.type === 'space') continue;
       let raw = t.raw, html;
       try {
-        html = render(t);
+        const ask = t.type === 'code' && /^answer\s+(\S+)/.exec(t.lang || '');
+        html = ask ? '<div class="ask" data-id="' + U.esc(ask[1]) + '"><div class="ask-q">' + marked.parse(t.text) + '</div></div>' : render(t);
         // <details> is split by blank lines into several tokens: glue them back into one block
         if (t.type === 'html' && /^\s*<details[\s>]/i.test(t.raw) && !/<\/details>/i.test(t.raw)) {
           let j = i + 1, parts = [html], raws = [t.raw], closed = false;
@@ -114,6 +115,26 @@ const R = (() => {
       const abs = s.startsWith('/') ? s : dir + '/' + s;
       img.src = 'lantern-asset://f/' + encodeURIComponent(abs).replace(/%2F/g, '/');
     });
+    root.querySelectorAll('.ask').forEach(a => {
+      const id = a.dataset.id, st = (plan.answers ||= {})[id] ||= { text: '', sent: false };
+      const ta = U.el('textarea', { class: 'ask-ta', 'data-id': id, rows: 3, placeholder: 'Type your answer…' });
+      ta.value = st.text;
+      const btn = U.el('button', { class: 'ask-send' });
+      const note = U.el('span', { class: 'ask-note' });
+      const paint = () => {
+        btn.textContent = st.sent ? 'Sent ✓' : 'Send'; btn.classList.toggle('done', st.sent);
+        note.textContent = st.sent ? '' : st.text ? 'Draft: Claude sees it after you press Send (⌘↩)' : '';
+        ta.rows = Math.max(3, Math.min(14, ta.value.split('\n').length + 1));
+      };
+      const save = () => U.post({ t: 'answer', path: plan.path, id, text: st.text, sent: st.sent });
+      let timer;
+      ta.addEventListener('input', () => { st.text = ta.value; st.sent = false; paint(); clearTimeout(timer); timer = setTimeout(save, 300); });
+      const send = () => { clearTimeout(timer); st.text = ta.value; st.sent = st.text.trim() !== ''; paint(); save(); };
+      btn.addEventListener('click', send);
+      ta.addEventListener('keydown', e => { if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) { e.preventDefault(); send(); } });
+      paint();
+      a.append(ta, U.el('div', { class: 'ask-row' }, note, btn));
+    });
     root.querySelectorAll('pre').forEach(pre => {
       const code = pre.querySelector('code'); if (!code) return;
       const lang = ((code.className.match(/language-([\w+-]+)/) || [])[1] || '').toLowerCase();
@@ -168,6 +189,7 @@ const R = (() => {
       root.append(d);
     });
     postProcess(root, plan);
+    if (typeof C !== "undefined") C.highlight(root, plan.comments || []);
     renderMermaid(root);
   }
 

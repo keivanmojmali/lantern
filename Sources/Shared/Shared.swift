@@ -67,6 +67,21 @@ struct PlanState: Codable {
     var decidedHash: String = ""
     var comments: [Comment] = []
 }
+/// What the user typed into an ```answer``` box in the viewer. Lives next to the plan, never inside the .md.
+struct Answer: Codable { var text: String; var sent: Bool; var ts: Double }
+struct AnswerBox { var id: String; var label: String }
+/// A comment the user attached to highlighted text. `quote` is the rendered text they selected, `before` the text just ahead of it
+/// (disambiguates repeats), `section` the heading it sits under. `submitted` means the user pressed "Done" in the viewer.
+struct Note: Codable { var id: String; var quote: String; var before: String; var section: String; var text: String; var ts: Double }
+struct NoteSet: Codable {
+    var notes: [Note] = []
+    var submitted = false
+    var json: [String: Any] {
+        let arr = (try? JSONEncoder().encode(notes)).flatMap { try? JSONSerialization.jsonObject(with: $0) } ?? []
+        return ["notes": arr, "submitted": submitted]
+    }
+}
+
 struct Snapshot: Codable { var ts: Double; var hash: String; var content: String }
 
 enum Store {
@@ -122,6 +137,30 @@ enum Store {
             }
         }
         return out
+    }
+    // Answer boxes: ```answer <id>\n<question>\n``` fences in the markdown
+    static func answerBoxes(_ content: String) -> [AnswerBox] {
+        guard let re = try? NSRegularExpression(pattern: "^```answer[ \\t]+(\\S+)[ \\t]*\\n([\\s\\S]*?)^```", options: [.anchorsMatchLines]) else { return [] }
+        let ns = content as NSString
+        return re.matches(in: content, range: NSRange(location: 0, length: ns.length)).map {
+            AnswerBox(id: ns.substring(with: $0.range(at: 1)), label: ns.substring(with: $0.range(at: 2)).trimmingCharacters(in: .whitespacesAndNewlines))
+        }
+    }
+    static func answersFile(_ path: String) -> String { dir + "/" + key(path) + ".answers.json" }
+    static func loadAnswers(_ path: String) -> [String: Answer] {
+        guard let d = FileManager.default.contents(atPath: answersFile(path)) else { return [:] }
+        return (try? JSONDecoder().decode([String: Answer].self, from: d)) ?? [:]
+    }
+    static func saveAnswers(_ path: String, _ a: [String: Answer]) {
+        if let d = try? JSONEncoder().encode(a) { try? d.write(to: URL(fileURLWithPath: answersFile(path)), options: .atomic) }
+    }
+    static func notesFile(_ path: String) -> String { dir + "/" + key(path) + ".comments.json" }
+    static func loadNotes(_ path: String) -> NoteSet {
+        guard let d = FileManager.default.contents(atPath: notesFile(path)) else { return NoteSet() }
+        return (try? JSONDecoder().decode(NoteSet.self, from: d)) ?? NoteSet()
+    }
+    static func saveNotes(_ path: String, _ n: NoteSet) {
+        if let d = try? JSONEncoder().encode(n) { try? d.write(to: URL(fileURLWithPath: notesFile(path)), options: .atomic) }
     }
     // History: last 50 snapshots
     static func histFile(_ path: String) -> String { dir + "/" + key(path) + ".history.json" }

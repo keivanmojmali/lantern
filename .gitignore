@@ -1,3 +1,5 @@
 build/
 Lantern.xcodeproj/
 .DS_Store
+.build/
+&2

@@ -79,3 +79,34 @@ ol.footnotes { font-size: .88em; color: var(--muted); }
 details { background: var(--card); border: 1px solid var(--border); border-radius: 12px; padding: 8px 14px; }
 details > summary { cursor: pointer; font-weight: 600; }
 details[open] > summary { margin-bottom: .5em; }
+#access { position: fixed; inset: 0; z-index: 80; display: flex; align-items: center; justify-content: center; background: color-mix(in srgb, var(--bg) 92%, transparent); backdrop-filter: blur(6px); }
+.accbox { max-width: 440px; margin: 24px; padding: 8px 28px 26px; text-align: center; background: var(--card); border: 1px solid var(--border); border-radius: 16px; }
+.accbox h2 { font: 800 1.2em/1.25 var(--head); }
+.accbox p { color: var(--muted); font-size: 14px; }
+.accbtn { margin-top: 6px; border: 0; background: var(--coral); color: #fff; font: 700 13px var(--body); padding: 8px 18px; border-radius: 999px; cursor: pointer; }
+.blk { scroll-margin-top: 16px; }
+.ask { background: var(--card); border: 1px solid var(--border); border-left: 4px solid var(--coral); border-radius: 14px; padding: 4px 16px 12px; margin: .4em 0; }
+.ask-q > :first-child { margin-top: .5em; } .ask-q > :last-child { margin-bottom: .5em; }
+.ask-ta { width: 100%; box-sizing: border-box; resize: vertical; font: 400 14.5px/1.5 var(--body); color: var(--text); background: var(--bg); border: 1px solid var(--border); border-radius: 10px; padding: 8px 10px; outline: none; }
+.ask-ta:focus { border-color: var(--coral); }
+.ask-row { display: flex; justify-content: space-between; align-items: center; gap: 10px; margin-top: 8px; min-height: 28px; }
+.ask-note { color: var(--muted); font-size: 12px; }
+.ask-send { margin-left: auto; border: 0; background: var(--coral); color: #fff; font: 700 12.5px var(--body); padding: 5px 16px; border-radius: 999px; }
+.ask-send.done { background: var(--mint); color: var(--slate); }
+/* highlight comments */
+mark.cmt { background: color-mix(in srgb, var(--coral) 28%, transparent); color: inherit; border-radius: 3px; cursor: pointer; padding: 1px 0; }
+mark.cmt:hover, mark.cmt.pulse { background: color-mix(in srgb, var(--coral) 45%, transparent); }
+#cbtn, #cpop, #cbar, #clist { position: fixed; z-index: 70; background: var(--card); border: 1px solid var(--border); box-shadow: 0 6px 24px rgba(0,0,0,.18); font: 600 12.5px var(--body); color: var(--text); }
+#cbtn { border-radius: 999px; padding: 5px 12px; cursor: pointer; }
+#cpop { width: 340px; border-radius: 14px; padding: 10px 12px 12px; font-weight: 400; }
+.cq { color: var(--muted); font-size: 12px; font-weight: 400; margin-bottom: 6px; overflow-wrap: anywhere; }
+#cbar { right: 16px; bottom: 16px; border-radius: 999px; padding: 5px 6px 5px 12px; display: flex; align-items: center; gap: 10px; }
+#cbar[hidden], #cbtn[hidden], #cpop[hidden], #clist[hidden] { display: none !important; }
+#clist { right: 16px; bottom: 58px; width: 320px; max-height: 50vh; overflow-y: auto; border-radius: 14px; padding: 6px; font-weight: 400; }
+.crow { position: relative; padding: 8px 28px 8px 10px; border-radius: 10px; cursor: pointer; font-size: 13px; }
+.crow:hover { background: var(--bg); }
+.crow.gone .cq { color: var(--coral); }
+.crow .cx { position: absolute; top: 6px; right: 4px; }
+.cx { border: 0; background: none; color: var(--muted); font: 600 12.5px var(--body); cursor: pointer; padding: 4px 8px; border-radius: 999px; }
+.cx:hover { color: var(--text); } .cx.danger:hover { color: #d33; }
+#cpop .ask-row .cx:first-child.danger { margin-right: auto; }

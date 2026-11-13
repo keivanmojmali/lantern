@@ -12,6 +12,12 @@ lantern — live plan viewer for your terminal workflow
   lantern switch <file|index|name>  show another open plan
   lantern window [--width N] [--height N] [--x N] [--y N] [--center] [--minimize|--restore|--fullscreen]
                                     resize / move Lantern's own window (x,y from top-left of the screen)
+  lantern goto <target> [--file F] [--focus]
+                                    scroll the viewer to a heading, text snippet or answer-box id
+  lantern answers [file] [--wait N] print what the user typed into the document's answer boxes
+                                    (--wait N: block up to N seconds until every box is sent)
+  lantern comments [file] [--wait N] print the comments the user attached to highlighted text
+                                    (--wait N: block up to N seconds until the user presses Done)
   lantern list                      list open plans
   lantern snapshot <out.png>        save a PNG of the viewer
   lantern mcp                       run as an MCP server over stdio (lets Claude control the viewer)
@@ -41,6 +47,7 @@ func launchApp() {
     guard let app = candidates.first else { if softErrors { return }; die("Lantern.app not found (run scripts/install.sh, or set LANTERN_APP)") }
     let p = Process(); p.executableURL = URL(fileURLWithPath: "/usr/bin/open")
     var args = ["-g"]   // -g: don't steal focus from the terminal
+    if env["LANTERN_TEST"] != nil { args.append("-n") }   // tests: new instance, never poke the user's real running Lantern
     for k in ["LANTERN_HOME", "LANTERN_TEST"] { if let v = env[k] { args += ["--env", "\(k)=\(v)"] } }
     p.arguments = args + [app]
     try? p.run(); p.waitUntilExit()
@@ -92,6 +99,9 @@ Lantern is a lean markdown viewer that shows your plans live in its own window. 
 - Edits you make to an open file appear live (changed blocks glow), so do NOT re-open after editing. Just keep writing the file.
 - Use lantern_switch to bring a different open file to the front, lantern_close when the doc is no longer relevant, lantern_list to see what is open.
 - Use lantern_window to resize, move, center, minimize or restore Lantern's own window if the user asks for more/less room or a different spot.
+- To point the user at something, call lantern_goto with a heading, a text snippet or an answer id; the viewer scrolls there and pulses it. Set focus true only when you need their attention right now.
+- To ask the user questions inside the document, put each one in a fenced block: ```answer q1 (newline) your question (newline) ```. The viewer shows it as a text box with a Send button. Open/refresh the doc, lantern_goto the first box, then read replies with lantern_answers (wait_seconds lets you block until they press Send). Answers are never written into the .md.
+- The user can also highlight any text in the viewer and attach a comment (e.g. to decide an open question and move on), then press "Done" in the viewer or tell you they are done. Read those with lantern_comments: it returns each highlighted quote, its section and the comment. Treat the comments as the user's decisions, then update the doc accordingly. Use wait_seconds to block until they press Done.
 - lantern_screenshot saves a PNG of the viewer if you need to check how something rendered.
 - Do not steal focus: leave focus false unless the user asks to jump to the viewer.
 """
@@ -107,6 +117,19 @@ let mcpTools: [[String: Any]] = [
      "inputSchema": ["type": "object", "required": ["target"], "properties": ["target": ["type": "string", "description": "Absolute path, 1-based tab index, or part of the file name"]]]],
     ["name": "lantern_list", "description": "List the files currently open in Lantern (the active one is marked).",
      "inputSchema": ["type": "object", "properties": [String: Any]()]],
+    ["name": "lantern_goto", "description": "Scroll the viewer to a place in a document so the user sees it (also switches to that tab). Use it when you want to point the user at something: a section, a diagram, a question. The spot pulses briefly.",
+     "inputSchema": ["type": "object", "required": ["target"], "properties": [
+        "target": ["type": "string", "description": "Heading text (e.g. \"Open questions\"), a snippet of text from the block, or an answer-box id"],
+        "path": ["type": "string", "description": "Absolute path of the file; omit for the file currently shown"],
+        "focus": ["type": "boolean", "description": "Also bring Lantern to the front (default false). Use true when you need the user's attention now."]]]],
+    ["name": "lantern_answers", "description": "Read what the user typed into the answer boxes of the open document(s). Add a box by writing a fenced block ```answer <id>``` in the markdown with your question as the body. Returns each box's question, text, and whether the user pressed Send.",
+     "inputSchema": ["type": "object", "properties": [
+        "path": ["type": "string", "description": "Absolute path of the file; omit for all open files"],
+        "wait_seconds": ["type": "integer", "minimum": 0, "maximum": 300, "description": "Block until every box has been sent, up to this many seconds (default 0 = return immediately)"]]]],
+    ["name": "lantern_comments", "description": "Read the comments the user attached to highlighted text in the open document(s): the selected quote, the section it sits under, and their comment. Also says whether the user pressed Done (finished commenting). Comments are never written into the .md.",
+     "inputSchema": ["type": "object", "properties": [
+        "path": ["type": "string", "description": "Absolute path of the file; omit for all open files"],
+        "wait_seconds": ["type": "integer", "minimum": 0, "maximum": 300, "description": "Block until the user presses Done, up to this many seconds (default 0 = return immediately)"]]]],
     ["name": "lantern_window", "description": "Resize and/or move Lantern's own window. Omitted fields stay unchanged; returns the resulting size and position.",
      "inputSchema": ["type": "object", "properties": [
         "width": ["type": "integer", "minimum": 320, "description": "Window width in points"],
@@ -118,6 +141,58 @@ let mcpTools: [[String: Any]] = [
     ["name": "lantern_screenshot", "description": "Save a PNG screenshot of the viewer and return its path.",
      "inputSchema": ["type": "object", "properties": ["out": ["type": "string", "description": "Output path (default /tmp/lantern.png)"]]]],
 ]
+
+/// Fetch answer boxes; with wait > 0, poll until every box has been sent (or time runs out).
+func fetchAnswers(path: String, wait: Double) -> (String, Bool) {
+    let deadline = Date().addingTimeInterval(wait)
+    while true {
+        let r = request(["cmd": "answers", "path": path], launch: false)
+        if let e = r["error"] as? String { return (e, true) }
+        let boxes = r["answers"] as? [[String: Any]] ?? []
+        let pending = boxes.contains { $0["sent"] as? Bool != true }
+        if boxes.isEmpty || !pending || Date() >= deadline {
+            if boxes.isEmpty { return ("no answer boxes in the open document(s). Add a ```answer <id>``` fenced block with your question inside.", false) }
+            var out = ""
+            for b in boxes {
+                let sent = b["sent"] as? Bool == true, text = b["text"] as? String ?? ""
+                let state = sent ? "sent" : text.isEmpty ? "not answered yet" : "draft, not sent yet"
+                out += "[\(b["id"] as? String ?? "")] \(b["question"] as? String ?? "")\n  (\(state))\n"
+                if !text.isEmpty { out += text.split(separator: "\n", omittingEmptySubsequences: false).map { "  > \($0)" }.joined(separator: "\n") + "\n" }
+                out += "\n"
+            }
+            return (out.trimmingCharacters(in: .whitespacesAndNewlines), false)
+        }
+        sleep(1)
+    }
+}
+
+/// Fetch highlight comments; with wait > 0, poll until the user has pressed Done on every document that has comments.
+func fetchComments(path: String, wait: Double) -> (String, Bool) {
+    let deadline = Date().addingTimeInterval(wait)
+    while true {
+        let r = request(["cmd": "comments", "path": path], launch: false)
+        if let e = r["error"] as? String { return (e, true) }
+        let docs = (r["comments"] as? [[String: Any]] ?? []).filter { !($0["notes"] as? [[String: Any]] ?? []).isEmpty }
+        let pending = docs.isEmpty || docs.contains { $0["submitted"] as? Bool != true }
+        if !pending || Date() >= deadline {
+            if docs.isEmpty { return ("no comments yet. The user can highlight text in the viewer and add a comment.", false) }
+            var out = ""
+            for d in docs {
+                let notes = d["notes"] as? [[String: Any]] ?? []
+                let done = d["submitted"] as? Bool == true
+                out += "\(d["path"] as? String ?? "") — \(notes.count) comment\(notes.count == 1 ? "" : "s"), " + (done ? "user pressed Done" : "user has NOT pressed Done yet (may still be commenting)") + "\n"
+                for (i, n) in notes.enumerated() {
+                    let sec = (n["section"] as? String ?? "").isEmpty ? "" : " [§ \(n["section"] as? String ?? "")]"
+                    out += "\n\(i + 1).\(sec) on: \"\(n["quote"] as? String ?? "")\"\n"
+                    out += (n["text"] as? String ?? "").split(separator: "\n", omittingEmptySubsequences: false).map { "   > \($0)" }.joined(separator: "\n") + "\n"
+                }
+                out += "\n"
+            }
+            return (out.trimmingCharacters(in: .whitespacesAndNewlines), false)
+        }
+        sleep(1)
+    }
+}
 
 func mcpCall(_ name: String, _ a: [String: Any]) -> (String, Bool) {
     func res(_ r: [String: Any], _ ok: String) -> (String, Bool) {
@@ -139,6 +214,15 @@ func mcpCall(_ name: String, _ a: [String: Any]) -> (String, Bool) {
         if let e = r["error"] as? String { return (e, true) }
         let ps = r["plans"] as? [[String: Any]] ?? []
         return (ps.isEmpty ? "nothing open" : ps.map { "\($0["active"] as? Bool == true ? "* " : "  ")\($0["path"] as? String ?? "")" }.joined(separator: "\n"), false)
+    case "lantern_goto":
+        guard let t = a["target"] as? String, !t.isEmpty else { return ("target is required", true) }
+        return res(request(["cmd": "goto", "target": t, "path": (a["path"] as? String).map { Store.resolve($0) } ?? "", "focus": a["focus"] as? Bool ?? false], launch: false, timeout: 20), "ok")
+    case "lantern_answers":
+        let wait = min(max((a["wait_seconds"] as? NSNumber)?.doubleValue ?? 0, 0), 300)
+        return fetchAnswers(path: (a["path"] as? String).map { Store.resolve($0) } ?? "", wait: wait)
+    case "lantern_comments":
+        let wait = min(max((a["wait_seconds"] as? NSNumber)?.doubleValue ?? 0, 0), 300)
+        return fetchComments(path: (a["path"] as? String).map { Store.resolve($0) } ?? "", wait: wait)
     case "lantern_window":
         var req: [String: Any] = ["cmd": "window"]
         for k in ["width", "height", "x", "y", "center", "state"] { if let v = a[k] { req[k] = v } }
@@ -182,7 +266,7 @@ func runMCP() -> Never {
 // MARK: commands
 var args = Array(CommandLine.arguments.dropFirst())
 guard let first = args.first else { print(usage); exit(0) }
-let known: Set<String> = ["mcp", "open", "close", "switch", "window", "list", "snapshot", "eval", "help", "--help", "-h"]
+let known: Set<String> = ["goto", "answers", "comments", "mcp", "open", "close", "switch", "window", "list", "snapshot", "eval", "help", "--help", "-h"]
 var cmd = "open"
 if known.contains(first) { cmd = first; args.removeFirst() }
 
@@ -228,6 +312,25 @@ case "window":
     let r = request(req, launch: false)
     if let e = r["error"] as? String { die(e) }
     print(r["message"] as? String ?? "ok")
+
+case "goto":
+    let focus = flag("--focus"), file = opt("--file").map { Store.resolve($0) } ?? ""
+    guard !args.isEmpty else { die("usage: lantern goto <heading|text|answer-id> [--file F] [--focus]") }
+    let r = request(["cmd": "goto", "target": args.joined(separator: " "), "path": file, "focus": focus], launch: false, timeout: 20)
+    if let e = r["error"] as? String { die(e) }
+    print(r["message"] as? String ?? "ok")
+
+case "answers":
+    let wait = opt("--wait").flatMap { Double($0) } ?? 0
+    let (text, isErr) = fetchAnswers(path: args.first.map { Store.resolve($0) } ?? "", wait: wait)
+    if isErr { die(text) }
+    print(text)
+
+case "comments":
+    let wait = opt("--wait").flatMap { Double($0) } ?? 0
+    let (text, isErr) = fetchComments(path: args.first.map { Store.resolve($0) } ?? "", wait: wait)
+    if isErr { die(text) }
+    print(text)
 
 case "list":
     let r = request(["cmd": "list"], launch: false)
