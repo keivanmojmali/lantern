@@ -50,8 +50,10 @@ const C = (() => {
   const btn = U.el('button', { id: 'cbtn', hidden: true }, '💬 Comment');
   const pop = U.el('div', { id: 'cpop', hidden: true });
   const barEl = U.el('div', { id: 'cbar', hidden: true });
-  const list = U.el('div', { id: 'clist', hidden: true });
-  document.body.append(btn, pop, barEl, list);
+  const side = document.getElementById('csb');
+  document.body.append(btn, pop, barEl);
+  const KEY = 'lantern.commentsSidebar';
+  let open = false; try { open = localStorage.getItem(KEY) === '1'; } catch (e) {}
 
   function selection() {
     const sel = getSelection(), doc = document.getElementById('docin');
@@ -79,14 +81,17 @@ const C = (() => {
   const hideAll = () => { btn.hidden = true; pop.hidden = true; pending = null; };
 
   document.addEventListener('mouseup', e => {
-    if (e.target.closest('#cbtn, #cpop, #cbar, #clist')) return;
+    if (e.target.closest('#cbtn, #cpop, #cbar, #csb')) return;
     setTimeout(() => {
       const s = selection();
       if (s) { pending = s; place(btn, s.rect, false); pop.hidden = true; }
       else if (!e.target.closest('mark.cmt')) hideAll();
     }, 0);
   });
-  document.addEventListener('keydown', e => { if (e.key === 'Escape') { hideAll(); list.hidden = true; } });
+  document.addEventListener('keydown', e => {
+    if (e.key === 'Escape') { if (!btn.hidden || !pop.hidden) hideAll(); else if (open) toggle(false); }
+    else if (e.metaKey && e.shiftKey && e.code === 'KeyC') { e.preventDefault(); toggle(); }
+  });
   document.getElementById('doc').addEventListener('scroll', () => { btn.hidden = true; if (!pop.hidden) pop.hidden = true; }, { passive: true });
   btn.addEventListener('mousedown', e => e.preventDefault());   // keep the selection alive
   btn.addEventListener('click', () => { if (pending) { btn.hidden = true; editor(pending, null); } });
@@ -121,30 +126,98 @@ const C = (() => {
     place(pop, ctx.rect, true); ta.focus();
   }
 
-  // ───────── bottom bar: count, list, Done ─────────
+  // ───────── sidebar + count pill ─────────
+  const docEl = () => document.getElementById('doc');
+
+  // Opening/closing changes the doc width; keep the block at the top of the viewport where it was.
+  function toggle(force) {
+    const want = force === undefined ? !open : force; if (want === open) return;
+    const d = docEl(), top = d.getBoundingClientRect().top;
+    const anchor = [...document.querySelectorAll('#docin .blk')].find(b => b.getBoundingClientRect().bottom > top + 4);
+    const off = anchor ? anchor.getBoundingClientRect().top - top : 0;
+    open = want; try { localStorage.setItem(KEY, open ? '1' : '0'); } catch (e) {}
+    hideAll(); bar();
+    if (anchor) requestAnimationFrame(() => { d.scrollTop += anchor.getBoundingClientRect().top - docEl().getBoundingClientRect().top - off; });
+  }
+
   function bar() {
     const p = cur(), n = p ? p.comments.length : 0;
-    barEl.hidden = !n; if (!n) { list.hidden = true; return; }
-    const count = U.el('button', { class: 'cx', title: 'Show all comments' }, n + (n === 1 ? ' comment' : ' comments'));
-    count.addEventListener('click', () => { list.hidden = !list.hidden; if (!list.hidden) fillList(); });
-    const done = U.el('button', { class: 'ask-send' + (p.submitted ? ' done' : '') }, p.submitted ? 'Done ✓ Claude can read them' : 'Done — send to Claude');
-    done.addEventListener('click', () => save(p, true));
-    barEl.replaceChildren(count, done);
-    if (!list.hidden) fillList();
+    side.hidden = !open;
+    barEl.hidden = open || !n;
+    if (!barEl.hidden) {
+      const count = U.el('button', { class: 'cx', title: 'Show all comments (⌘⇧C)' }, n + (n === 1 ? ' comment' : ' comments'));
+      count.addEventListener('click', () => toggle(true));
+      barEl.replaceChildren(count);
+    }
+    if (open) renderSide();
   }
-  function fillList() {
-    const p = cur(); if (!p) return;
-    list.replaceChildren(...p.comments.map(c => {
-      const row = U.el('div', { class: 'crow' + (c.detached ? ' gone' : '') },
-        U.el('div', { class: 'cq' }, '“' + (c.quote.length > 90 ? c.quote.slice(0, 90) + '…' : c.quote) + '”' + (c.detached ? ' (text changed)' : '')),
-        U.el('div', {}, c.text));
+
+  const ago = ts => {
+    const s = Math.max(0, Date.now() / 1000 - ts);
+    return s < 60 ? 'just now' : s < 3600 ? Math.floor(s / 60) + 'm ago' : s < 86400 ? Math.floor(s / 3600) + 'h ago' : Math.floor(s / 86400) + 'd ago';
+  };
+  const markOf = c => document.querySelector('mark.cmt[data-id="' + c.id + '"]');
+
+  function renderSide() {
+    const p = cur();
+    const close = U.el('button', { class: 'cx', title: 'Close (Esc)' }, '✕');
+    close.addEventListener('click', () => toggle(false));
+    const head = U.el('div', { class: 'chead' }, 'Comments' + (p && p.comments.length ? ' (' + p.comments.length + ')' : ''), close);
+    const body = U.el('div', { class: 'cbody' });
+    const foot = U.el('div', { class: 'cfoot' });
+    const all = p ? p.comments : [];
+    const placed = all.map(c => ({ c, mk: markOf(c) })).filter(x => x.mk)
+      .sort((a, b) => (a.mk.compareDocumentPosition(b.mk) & Node.DOCUMENT_POSITION_FOLLOWING) ? -1 : 1);
+    const gone = all.filter(c => !markOf(c));
+
+    const row = (c, mk) => {
+      const r = U.el('div', { class: 'crow' + (mk ? '' : ' gone'), 'data-id': c.id },
+        U.el('div', { class: 'cq' }, '“' + (c.quote.length > 90 ? c.quote.slice(0, 90) + '…' : c.quote) + '”' + (mk ? '' : ' (text changed)')),
+        U.el('div', { class: 'ctext', title: 'Click to edit' }, c.text),
+        U.el('div', { class: 'cmeta' }, [c.section, c.ts ? ago(c.ts) : ''].filter(Boolean).join(' · ')));
       const x = U.el('button', { class: 'cx danger', title: 'Delete' }, '✕');
       x.addEventListener('click', e => { e.stopPropagation(); p.comments = p.comments.filter(y => y !== c); save(p); });
-      row.append(x);
-      row.addEventListener('click', () => { const mk = document.querySelector('mark.cmt[data-id="' + c.id + '"]'); if (mk) { mk.scrollIntoView({ block: 'center', behavior: 'smooth' }); mk.classList.add('pulse'); setTimeout(() => mk.classList.remove('pulse'), 1500); } });
-      return row;
-    }));
+      r.append(x);
+      r.querySelector('.ctext').addEventListener('click', e => { e.stopPropagation(); editor({ rect: r.getBoundingClientRect() }, c); });
+      r.addEventListener('click', () => {
+        const m = markOf(c); if (!m) return;
+        m.scrollIntoView({ block: 'center', behavior: 'smooth' });
+        m.classList.add('pulse'); setTimeout(() => m.classList.remove('pulse'), 1500);
+        setActive(c.id, false);
+      });
+      return r;
+    };
+    if (!all.length) body.append(U.el('div', { class: 'cempty' }, 'Select text in the plan to leave a comment.'));
+    placed.forEach(x => body.append(row(x.c, x.mk)));
+    if (gone.length) { body.append(U.el('div', { class: 'cgap' }, 'Text changed')); gone.forEach(c => body.append(row(c, null))); }
+    if (all.length) {
+      const done = U.el('button', { class: 'ask-send' + (p.submitted ? ' done' : '') }, p.submitted ? 'Done ✓ Claude can read them' : 'Done — send to Claude');
+      done.addEventListener('click', () => save(p, true));
+      foot.append(done);
+    }
+    foot.hidden = !all.length;
+    side.replaceChildren(head, body, foot);
+    spy();
   }
+
+  // scroll-spy: highlight the row whose mark is the first one at or below the top of the doc
+  let activeId = null;
+  function setActive(id, reveal) {
+    activeId = id;
+    side.querySelectorAll('.crow').forEach(r => {
+      const on = r.dataset.id === id; r.classList.toggle('active', on);
+      if (on && reveal) r.scrollIntoView({ block: 'nearest' });
+    });
+  }
+  function spy() {
+    if (!open) return;
+    const top = docEl().getBoundingClientRect().top + 8;
+    const marks = [...document.querySelectorAll('#docin mark.cmt')];
+    const hit = marks.find(m => m.getBoundingClientRect().bottom > top) || marks[marks.length - 1];
+    setActive(hit ? hit.dataset.id : null, true);
+  }
+  let spyQueued = false;
+  docEl().addEventListener('scroll', () => { if (spyQueued) return; spyQueued = true; requestAnimationFrame(() => { spyQueued = false; spy(); }); }, { passive: true });
 
   return { highlight, bar };
 })();

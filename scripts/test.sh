@@ -90,10 +90,24 @@ check "text is highlighted"      '[[ "$(ev "document.querySelector(\"mark.cmt\")
 shot 07-comment
 check "comment readable, not done" '[[ "$("$L" comments)" == *"NOT pressed Done"*"on: \"text\""*"> Go with option B"* ]]'
 check "comment survives re-render" '[[ "$(ev "document.querySelectorAll(\"mark.cmt\").length")" == 1 ]]'
-ev "document.querySelector(\"#cbar .ask-send\").click()" >/dev/null; sleep 0.6
+echo "== comments sidebar"
+check "sidebar closed by default" '[[ "$(ev "document.getElementById(\"csb\").hidden")" != 0 ]]'
+check "count pill shows"          '[[ "$(ev "!document.getElementById(\"cbar\").hidden")" != 0 ]]'
+ev "document.dispatchEvent(new KeyboardEvent(\"keydown\",{code:\"KeyC\",key:\"c\",metaKey:true,shiftKey:true,bubbles:true}))" >/dev/null; sleep 0.5
+check "cmd-shift-C opens sidebar" '[[ "$(ev "!document.getElementById(\"csb\").hidden")" != 0 ]]'
+check "pill hides while open"     '[[ "$(ev "document.getElementById(\"cbar\").hidden")" != 0 ]]'
+check "sidebar lists the comment" '[[ "$(ev "document.querySelectorAll(\"#csb .crow\").length")" == 1 ]]'
+check "row shows the text"        '[[ "$(ev "document.querySelector(\"#csb .ctext\").textContent")" == "Go with option B" ]]'
+ev "document.querySelector(\"#csb .crow\").click()" >/dev/null; sleep 0.3
+check "row click marks it active" '[[ "$(ev "!!document.querySelector(\"#csb .crow.active\")")" != 0 ]]'
+check "row click pulses highlight" '[[ "$(ev "!!document.querySelector(\"mark.cmt.pulse\")")" != 0 ]]'
+shot 08-sidebar
+ev "document.querySelector(\"#csb .ask-send\").click()" >/dev/null; sleep 0.6
 check "Done marks it submitted"  '[[ "$("$L" comments --wait 3)" == *"user pressed Done"*"> Go with option B"* ]]'
 printf '\n## Extra2\n\nmore\n' >> "$WORK/ask.md"; sleep 1
 check "highlight survives edit"  '[[ "$(ev "document.querySelectorAll(\"mark.cmt\").length")" == 1 ]]'
+ev "document.dispatchEvent(new KeyboardEvent(\"keydown\",{key:\"Escape\",bubbles:true}))" >/dev/null; sleep 0.4
+check "Esc closes sidebar"        '[[ "$(ev "document.getElementById(\"csb\").hidden")" != 0 ]]'
 check "mcp has comments tool"    'o="$(mcp "{\"jsonrpc\":\"2.0\",\"id\":2,\"method\":\"tools/list\"}")"; [[ "$o" == *lantern_comments* ]]'
 
 echo "== dark"

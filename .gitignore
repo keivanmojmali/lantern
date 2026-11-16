@@ -3,3 +3,4 @@ Lantern.xcodeproj/
 .DS_Store
 .build/
 &2
+Config/Local.xcconfig

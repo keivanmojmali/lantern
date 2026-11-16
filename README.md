@@ -12,6 +12,7 @@ Claude writes plans, specs and design docs as `.md`. Reading them as raw text in
 - **Live**: edit the file and the changed blocks glow, without re-opening anything.
 - **Tabs**: open a folder and every `.md` becomes a tab.
 - **Two-way, without touching the file**: Claude can ask you questions inside the doc, and you can highlight any text to comment on it. Replies are stored beside the plan, never in the `.md`.
+- **Comments sidebar**: ⌘⇧C opens every comment in a right-hand panel. Click one to jump to it.
 
 |  |  |
 |---|---|
@@ -24,7 +25,7 @@ Claude writes plans, specs and design docs as `.md`. Reading them as raw text in
     ./scripts/install.sh      # builds, installs /Applications/Lantern.app + ~/.local/bin/lantern, smoke-tests
     claude mcp add --scope user lantern -- ~/.local/bin/lantern mcp
 
-Needs macOS, Xcode and `xcodegen`.
+Needs macOS, Xcode and `xcodegen`. Builds are ad-hoc signed by default. To sign with your own Apple Development cert (so macOS stops re-asking for folder access after every rebuild), copy `Config/Local.xcconfig.example` to `Config/Local.xcconfig` and set your team ID.
 
 ## Use
 

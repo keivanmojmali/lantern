@@ -56,7 +56,8 @@ input[type=checkbox]:checked::after { content: ''; position: absolute; left: 4px
 /* layout */
 body { display: flex; flex-direction: column; }
 [hidden] { display: none !important; }
-#doc { flex: 1; min-height: 0; overflow-y: auto; overflow-x: hidden; }
+#wrap { flex: 1; min-height: 0; display: flex; position: relative; }
+#doc { flex: 1; min-width: 0; min-height: 0; overflow-y: auto; overflow-x: hidden; }
 #docin { max-width: 760px; margin: 0 auto; padding: 20px 32px 80px; }
 #tabs { flex: none; display: flex; gap: 2px; padding: 0 8px; overflow-x: auto; overflow-y: hidden; scrollbar-width: none; border-bottom: 1px solid var(--border); }
 #tabs::-webkit-scrollbar { display: none; }
@@ -96,17 +97,29 @@ details[open] > summary { margin-bottom: .5em; }
 /* highlight comments */
 mark.cmt { background: color-mix(in srgb, var(--coral) 28%, transparent); color: inherit; border-radius: 3px; cursor: pointer; padding: 1px 0; }
 mark.cmt:hover, mark.cmt.pulse { background: color-mix(in srgb, var(--coral) 45%, transparent); }
-#cbtn, #cpop, #cbar, #clist { position: fixed; z-index: 70; background: var(--card); border: 1px solid var(--border); box-shadow: 0 6px 24px rgba(0,0,0,.18); font: 600 12.5px var(--body); color: var(--text); }
+#cbtn, #cpop, #cbar { position: fixed; z-index: 70; background: var(--card); border: 1px solid var(--border); box-shadow: 0 6px 24px rgba(0,0,0,.18); font: 600 12.5px var(--body); color: var(--text); }
 #cbtn { border-radius: 999px; padding: 5px 12px; cursor: pointer; }
 #cpop { width: 340px; border-radius: 14px; padding: 10px 12px 12px; font-weight: 400; }
 .cq { color: var(--muted); font-size: 12px; font-weight: 400; margin-bottom: 6px; overflow-wrap: anywhere; }
 #cbar { right: 16px; bottom: 16px; border-radius: 999px; padding: 5px 6px 5px 12px; display: flex; align-items: center; gap: 10px; }
-#cbar[hidden], #cbtn[hidden], #cpop[hidden], #clist[hidden] { display: none !important; }
-#clist { right: 16px; bottom: 58px; width: 320px; max-height: 50vh; overflow-y: auto; border-radius: 14px; padding: 6px; font-weight: 400; }
-.crow { position: relative; padding: 8px 28px 8px 10px; border-radius: 10px; cursor: pointer; font-size: 13px; }
+#cbar[hidden], #cbtn[hidden], #cpop[hidden] { display: none !important; }
+/* comments sidebar */
+#csb { flex: none; width: 320px; display: flex; flex-direction: column; background: var(--card); border-left: 1px solid var(--border); font-size: 13px; }
+#csb .chead { flex: none; display: flex; align-items: center; justify-content: space-between; padding: 8px 8px 8px 14px; border-bottom: 1px solid var(--border); font-weight: 700; font-size: 12.5px; }
+#csb .cbody { flex: 1; min-height: 0; overflow-y: auto; padding: 6px; }
+#csb .cfoot { flex: none; display: flex; padding: 10px; border-top: 1px solid var(--border); }
+#csb .cfoot .ask-send { margin: 0; width: 100%; padding: 7px 16px; }
+#csb .cempty { color: var(--muted); text-align: center; padding: 28px 16px; }
+#csb .cgap { color: var(--muted); font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .04em; padding: 10px 10px 4px; }
+.crow { position: relative; padding: 8px 28px 8px 12px; border-radius: 10px; cursor: pointer; border-left: 3px solid transparent; }
 .crow:hover { background: var(--bg); }
-.crow.gone .cq { color: var(--coral); }
+.crow.active { border-left-color: var(--coral); background: color-mix(in srgb, var(--coral) 10%, transparent); }
+.crow.gone { opacity: .6; } .crow.gone .cq { color: var(--coral); }
+.crow .ctext { cursor: text; }
+.crow .cmeta { color: var(--muted); font-size: 11px; margin-top: 3px; }
 .crow .cx { position: absolute; top: 6px; right: 4px; }
+@media (max-width: 900px) { #csb { position: absolute; top: 0; right: 0; bottom: 0; z-index: 65; box-shadow: -8px 0 24px rgba(0,0,0,.14); } }
+
 .cx { border: 0; background: none; color: var(--muted); font: 600 12.5px var(--body); cursor: pointer; padding: 4px 8px; border-radius: 999px; }
 .cx:hover { color: var(--text); } .cx.danger:hover { color: #d33; }
 #cpop .ask-row .cx:first-child.danger { margin-right: auto; }

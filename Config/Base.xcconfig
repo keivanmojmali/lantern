@@ -1,0 +1,6 @@
+// Defaults that work for anyone: ad-hoc signing, no Apple account needed.
+CODE_SIGN_IDENTITY = -
+CODE_SIGN_STYLE = Manual
+
+// Optional, untracked per-machine overrides (your signing team). See Config/Local.xcconfig.example.
+#include? "Local.xcconfig"

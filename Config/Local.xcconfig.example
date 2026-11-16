@@ -1,0 +1,5 @@
+// Copy to Config/Local.xcconfig (gitignored) and fill in your team to sign with your Apple Development cert.
+// A stable identity stops macOS from re-asking for Desktop/Documents access after every rebuild.
+CODE_SIGN_STYLE = Automatic
+CODE_SIGN_IDENTITY = Apple Development
+DEVELOPMENT_TEAM = YOUR_TEAM_ID
